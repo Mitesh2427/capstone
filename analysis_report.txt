@@ -1,22 +1,17 @@
-=== MODEL COMPARISON REPORT ===
+=== FINAL MODEL COMPARISON REPORT ===
 
-Classical Model:
-Mean Accuracy: 73.65
-Std Dev: 15.37
+Classical Mean Accuracy: 73.65
+Quantum Mean Accuracy: 65.68
 
-Quantum Model:
-Mean Accuracy: 65.68
-Std Dev: 17.51
-
-Paired T-Test:
 T-statistic: 5.5995
 P-value: 0.000511
 
-Result: Statistically significant difference (p < 0.05)
+Statistically significant difference observed.
 
 Mean Improvement (Classical - Quantum): 7.96
 Cohen's d: 1.9797
 
-Interpretation:
-- Positive improvement → Classical performs better
-- Higher Cohen's d → stronger effect size
+Conclusion:
+The classical EEGNet+TCN model demonstrates higher overall accuracy and better consistency.
+The quantum-enhanced model shows improvements on certain subjects but exhibits higher variability,
+indicating sensitivity to subject-specific characteristics.
