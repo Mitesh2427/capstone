@@ -1,0 +1,22 @@
+=== MODEL COMPARISON REPORT ===
+
+Classical Model:
+Mean Accuracy: 73.65
+Std Dev: 15.37
+
+Quantum Model:
+Mean Accuracy: 65.68
+Std Dev: 17.51
+
+Paired T-Test:
+T-statistic: 5.5995
+P-value: 0.000511
+
+Result: Statistically significant difference (p < 0.05)
+
+Mean Improvement (Classical - Quantum): 7.96
+Cohen's d: 1.9797
+
+Interpretation:
+- Positive improvement → Classical performs better
+- Higher Cohen's d → stronger effect size

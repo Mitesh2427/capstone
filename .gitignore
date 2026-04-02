@@ -1,0 +1,20 @@
+# environments
+venv/
+
+# python cache
+__pycache__/
+*.pyc
+
+# results (we will zip instead)
+results/
+results_v2/
+results_v3/
+results_v4/
+results_quantum/
+
+# models
+*.pt
+*.pth
+
+# system
+.DS_Store
