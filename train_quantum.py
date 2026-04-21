@@ -7,8 +7,6 @@ import os
 import pandas as pd
 from sklearn.metrics import cohen_kappa_score
 from sklearn.model_selection import train_test_split
-
-# NEW IMPORTS
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from sklearn.metrics import roc_curve, auc
@@ -35,7 +33,7 @@ from eegnet_tcn_quantum_model import EEGNetTCNQuantum
 # ─────────────────────────────────────────────
 SUBJECTS = list(range(1, 10))
 BATCH_SIZE = 16
-MAX_EPOCHS = 150
+MAX_EPOCHS = 200
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print(f"\nUsing device: {DEVICE}\n")
@@ -51,8 +49,9 @@ os.makedirs(PLOTS_DIR, exist_ok=True)
 # CONFIGS
 # ─────────────────────────────────────────────
 CONFIGS = [
-    {"F1": 8,  "D": 2, "dropout": 0.3,  "kernel": 64, "tcn_kernel": 3},
-    {"F1": 16, "D": 2, "dropout": 0.3,  "kernel": 64, "tcn_kernel": 3},
+    {"F1": 8,  "D": 1, "dropout": 0.3,  "kernel": 64, "tcn_kernel": 3},
+    {"F1": 12, "D": 1, "dropout": 0.25, "kernel": 64, "tcn_kernel": 3},
+    {"F1": 16, "D": 1, "dropout": 0.2,  "kernel": 64, "tcn_kernel": 3},
 ]
 
 
@@ -172,13 +171,24 @@ for subj in SUBJECTS:
             tcn_kernel=cfg["tcn_kernel"]
         ).to(DEVICE)
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=7e-4, weight_decay=1e-4)
+        optimizer = torch.optim.Adam([
+            {"params": model.quantum.parameters(), "lr": 1e-4},
+            {"params": model.pre_quantum.parameters(), "lr": 5e-4},
+            {"params": model.gate_layer.parameters(), "lr": 7e-4},
+            {"params": model.classifier.parameters(), "lr": 7e-4},
+            {"params": model.temporal_conv.parameters(), "lr": 7e-4},
+            {"params": model.depthwise_conv.parameters(), "lr": 7e-4},
+            {"params": model.separable_conv.parameters(), "lr": 7e-4},
+            {"params": model.tcn.parameters(), "lr": 7e-4},
+            {"params": model.classical_proj.parameters(), "lr": 7e-4},
+        ], weight_decay=1e-4)
+
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, mode='max', factor=0.5, patience=10
         )
         criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-        patience = 30
+        patience = 40
         counter = 0
         local_best = -1
         best_epoch_state = copy.deepcopy(model.state_dict())

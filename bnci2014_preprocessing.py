@@ -6,8 +6,8 @@ SFREQ = 250
 TMIN = 0.5
 TMAX = 6.0
 
-# 🔥 SWITCH HERE
-USE_RANDOM_SPLIT = True   # ✅ True = within-session | False = cross-session
+
+USE_RANDOM_SPLIT = True
 
 
 # ─────────────────────────────
@@ -54,7 +54,7 @@ def get_subject_data(dataset, paradigm, subject_id):
     X = epochs.get_data()
     ch_names = epochs.ch_names
 
-    # 🔥 OPTION 1: RANDOM SPLIT (RECOMMENDED)
+    
     if USE_RANDOM_SPLIT:
         X_train, X_test, y_train, y_test = train_test_split(
             X, labels,
@@ -63,7 +63,7 @@ def get_subject_data(dataset, paradigm, subject_id):
             random_state=42
         )
 
-    # 🔥 OPTION 2: CROSS-SESSION (OLD BEHAVIOR)
+    
     else:
         sessions = meta["session"].values
         unique_sessions = np.unique(sessions)
@@ -104,7 +104,7 @@ def encode_labels(y_train, y_test):
 
 
 # ─────────────────────────────
-# 🔥 STRONG NORMALIZATION (IMPROVED)
+#  STRONG NORMALIZATION
 # ─────────────────────────────
 def normalize(X_train, X_test):
 
@@ -115,7 +115,7 @@ def normalize(X_train, X_test):
         std[std < 1e-6] = 1e-6
         X = (X - mean) / std
 
-        # 🔥 CLIPPING helps noisy subjects
+        
         X = np.clip(X, -5, 5)
 
         return X
