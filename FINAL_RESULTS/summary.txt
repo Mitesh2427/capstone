@@ -1,0 +1,17 @@
+===== FINAL RESULTS SUMMARY =====
+
+CLASSICAL MODEL
+Mean Accuracy: 72.89
+Std Accuracy: 17.21
+Params: 31523
+Latency: 5.76 ms
+
+QUANTUM MODEL
+Mean Accuracy: 74.76
+Std Accuracy: 17.45
+Params: 9371
+Latency: 9.24 ms
+
+COMPARISON
+Parameter Reduction: 70.27%
+Accuracy Difference: 1.87

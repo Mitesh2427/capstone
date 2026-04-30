@@ -40,7 +40,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 print(f"\nUsing device: {DEVICE}\n")
 
-SAVE_DIR = "results_v4"
+SAVE_DIR = "results_v5"
 PLOTS_DIR = os.path.join(SAVE_DIR, "plots")
 
 os.makedirs(SAVE_DIR, exist_ok=True)

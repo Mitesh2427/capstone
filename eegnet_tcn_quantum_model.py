@@ -7,11 +7,14 @@ import torch.nn as nn
 class EEGNetTCNQuantum(nn.Module):
     def __init__(self, n_channels=22, n_classes=4,
                  F1=12, D=1, F2=12, dropout=0.25,
-                 kernel_length=64, sep_kernel=16, tcn_kernel=3):
+                 kernel_length=64, sep_kernel=16, tcn_kernel=3,
+                 n_qubits=10, n_layers=4):
 
         super().__init__()
 
-        # ───── EEGNet ─────
+        # -----------------------------
+        # EEGNet
+        # -----------------------------
         self.temporal_conv = nn.Sequential(
             nn.Conv2d(1, F1, (1, kernel_length),
                       padding=(0, kernel_length // 2), bias=False),
@@ -39,34 +42,47 @@ class EEGNetTCNQuantum(nn.Module):
             nn.Dropout(dropout),
         )
 
-        # ───── TCN ─────
+        # -----------------------------
+        # TCN
+        # -----------------------------
         self.tcn = TCN(F2, dropout=dropout, kernel_size=tcn_kernel)
-
         self.gap = nn.AdaptiveAvgPool1d(1)
 
-        # ───── QUANTUM ─────
-        self.n_qubits = 10
+        # -----------------------------
+        # Quantum
+        # -----------------------------
+        self.n_qubits = n_qubits
 
+        # Improved projection (less info loss)
         self.pre_quantum = nn.Sequential(
-            nn.Linear(F2, self.n_qubits),
-            nn.LayerNorm(self.n_qubits),
-            nn.Tanh()
+            nn.Linear(F2, 2 * n_qubits),
+            nn.ReLU(),
+            nn.Linear(2 * n_qubits, n_qubits),
+            nn.LayerNorm(n_qubits)
         )
 
-        self.quantum = QuantumLayer(n_qubits=self.n_qubits, n_layers=4)
+        self.quantum = QuantumLayer(n_qubits=n_qubits, n_layers=n_layers)
 
-        # GATE
-        self.gate_layer = nn.Linear(F2, self.n_qubits)
-        self.classical_proj = nn.Linear(F2, self.n_qubits)
+        # Classical projection (for fusion)
+        self.classical_proj = nn.Linear(F2, n_qubits)
 
-        # CLASSIFIER
+        # Gate
+        self.gate_layer = nn.Linear(F2, n_qubits)
+
+        # Classical head (aux loss + confidence)
+        self.classical_head = nn.Linear(F2, n_classes)
+
+        # Final classifier
         self.classifier = nn.Sequential(
-            nn.Linear(self.n_qubits, 32),
+            nn.Linear(n_qubits, 32),
             nn.ReLU(),
             nn.Linear(32, n_classes)
         )
 
     def forward(self, x):
+        # -----------------------------
+        # EEGNet + TCN
+        # -----------------------------
         x = self.temporal_conv(x)
         x = self.depthwise_conv(x)
         x = self.separable_conv(x)
@@ -76,27 +92,49 @@ class EEGNetTCNQuantum(nn.Module):
 
         x = self.gap(x).squeeze(-1)
 
-        # ───── BRANCHES ─────
         x_classical = x
 
-        x_q = self.pre_quantum(x)
+        # -----------------------------
+        # Classical branch
+        # -----------------------------
+        classical_logits = self.classical_head(x_classical)
+
+        probs = torch.softmax(classical_logits, dim=1)
+        confidence = torch.max(probs, dim=1, keepdim=True)[0]
+
+        # -----------------------------
+        # Quantum branch
+        # -----------------------------
+        x_q = self.pre_quantum(x_classical)
+
+        # Noise regularization (important)
+        x_q = x_q + 0.01 * torch.randn_like(x_q)
+
         x_q = self.quantum(x_q)
 
-        # GATED FUSION
-        gate = torch.sigmoid(self.gate_layer(x_classical))
-        gate = torch.clamp(gate, 0.2, 0.8)
-
+        # -----------------------------
+        # Fusion
+        # -----------------------------
         x_classical_proj = self.classical_proj(x_classical)
 
         gate = torch.sigmoid(self.gate_layer(x_classical))
+
+        # Confidence-aware gating
+        confidence = confidence.repeat(1, self.n_qubits)
+        gate = gate * confidence
+
+        # Stabilize gate
         gate = torch.clamp(gate, 0.2, 0.8)
 
+        # Combine
         x = gate * x_q + (1 - gate) * x_classical_proj
 
-        # residual safety
+        # Residual safety
         x = x + 0.3 * x_classical_proj
 
+        # -----------------------------
+        # Final output
+        # -----------------------------
+        final_logits = self.classifier(x)
 
-        x = self.classifier(x)
-
-        return x
+        return final_logits, classical_logits

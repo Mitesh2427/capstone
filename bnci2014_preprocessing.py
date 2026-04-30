@@ -4,15 +4,14 @@ from sklearn.model_selection import train_test_split
 
 SFREQ = 250
 TMIN = 0.5
-TMAX = 6.0
-
+TMAX = 4.0   # reduced from 6.0 for better signal quality
 
 USE_RANDOM_SPLIT = True
 
 
-# ─────────────────────────────
+# -----------------------------
 # LOAD DATA
-# ─────────────────────────────
+# -----------------------------
 def load_dataset(subject_ids=None):
     from moabb.datasets import BNCI2014001
 
@@ -24,9 +23,9 @@ def load_dataset(subject_ids=None):
     return dataset, subject_ids
 
 
-# ─────────────────────────────
-# PARADIGM (OPTIMAL BAND)
-# ─────────────────────────────
+# -----------------------------
+# PARADIGM (BANDPASS FILTERING)
+# -----------------------------
 def get_paradigm():
     from moabb.paradigms import MotorImagery
 
@@ -41,9 +40,9 @@ def get_paradigm():
     )
 
 
-# ─────────────────────────────
-# DATA EXTRACTION (FIXED)
-# ─────────────────────────────
+# -----------------------------
+# DATA EXTRACTION
+# -----------------------------
 def get_subject_data(dataset, paradigm, subject_id):
     epochs, labels, meta = paradigm.get_data(
         dataset=dataset,
@@ -54,7 +53,6 @@ def get_subject_data(dataset, paradigm, subject_id):
     X = epochs.get_data()
     ch_names = epochs.ch_names
 
-    
     if USE_RANDOM_SPLIT:
         X_train, X_test, y_train, y_test = train_test_split(
             X, labels,
@@ -62,8 +60,6 @@ def get_subject_data(dataset, paradigm, subject_id):
             stratify=labels,
             random_state=42
         )
-
-    
     else:
         sessions = meta["session"].values
         unique_sessions = np.unique(sessions)
@@ -81,17 +77,17 @@ def get_subject_data(dataset, paradigm, subject_id):
     }
 
 
-# ─────────────────────────────
+# -----------------------------
 # CHANNEL CLEANING
-# ─────────────────────────────
+# -----------------------------
 def select_eeg_channels(X, ch_names):
     eeg_idx = [i for i, ch in enumerate(ch_names) if "EOG" not in ch.upper()]
     return X[:, eeg_idx, :], [ch_names[i] for i in eeg_idx]
 
 
-# ─────────────────────────────
+# -----------------------------
 # LABEL ENCODING
-# ─────────────────────────────
+# -----------------------------
 def encode_labels(y_train, y_test):
     le = LabelEncoder()
     le.fit(y_train)
@@ -103,19 +99,20 @@ def encode_labels(y_train, y_test):
     )
 
 
-# ─────────────────────────────
-#  STRONG NORMALIZATION
-# ─────────────────────────────
+# -----------------------------
+# NORMALIZATION
+# -----------------------------
 def normalize(X_train, X_test):
 
     def trial_norm(X):
-        mean = X.mean(axis=2, keepdims=True)
-        std = X.std(axis=2, keepdims=True)
+        # Normalize across channels + time for stability
+        mean = X.mean(axis=(1, 2), keepdims=True)
+        std = X.std(axis=(1, 2), keepdims=True)
 
         std[std < 1e-6] = 1e-6
         X = (X - mean) / std
 
-        
+        # Clip extreme values
         X = np.clip(X, -5, 5)
 
         return X
@@ -123,19 +120,25 @@ def normalize(X_train, X_test):
     X_train = trial_norm(X_train)
     X_test = trial_norm(X_test)
 
+    # Global normalization (important for inter-subject consistency)
+    global_std = np.std(X_train) + 1e-6
+
+    X_train = X_train / global_std
+    X_test = X_test / global_std
+
     return X_train, X_test
 
 
-# ─────────────────────────────
+# -----------------------------
 # FORMAT FOR EEGNET
-# ─────────────────────────────
+# -----------------------------
 def format_eegnet(X):
     return X[:, np.newaxis, :, :].astype(np.float32)
 
 
-# ─────────────────────────────
+# -----------------------------
 # MAIN PIPELINE
-# ─────────────────────────────
+# -----------------------------
 def preprocess_subject(dataset, paradigm, subject_id):
     data = get_subject_data(dataset, paradigm, subject_id)
 
@@ -162,9 +165,9 @@ def preprocess_subject(dataset, paradigm, subject_id):
     }
 
 
-# ─────────────────────────────
+# -----------------------------
 # RUN ALL SUBJECTS
-# ─────────────────────────────
+# -----------------------------
 def run_pipeline(subject_ids=None):
     dataset, subject_ids = load_dataset(subject_ids)
     paradigm = get_paradigm()

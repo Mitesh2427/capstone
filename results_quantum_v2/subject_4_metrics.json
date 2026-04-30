@@ -1,0 +1,13 @@
+{
+    "accuracy": 56.63716814159292,
+    "kappa": 0.4225675252893941,
+    "config": {
+        "F1": 12,
+        "D": 1,
+        "dropout": 0.25,
+        "kernel": 64,
+        "tcn_kernel": 3,
+        "n_qubits": 12,
+        "n_layers": 3
+    }
+}
