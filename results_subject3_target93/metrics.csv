@@ -1,0 +1,2 @@
+subject,accuracy,kappa,config
+3,93.10344827586206,0.9080459770114943,"{'F1': 16, 'D': 1, 'dropout': 0.2, 'kernel': 64, 'tcn_kernel': 3, 'n_qubits': 6, 'n_layers': 2, 'lr_q': 0.0001, 'lr_c': 0.0007, 'aux_w': 0.2}"

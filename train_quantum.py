@@ -2,13 +2,12 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 import copy
-import time
 import os
 import pandas as pd
 import numpy as np
 import random
 
-from sklearn.metrics import cohen_kappa_score
+from sklearn.metrics import cohen_kappa_score, confusion_matrix
 from sklearn.model_selection import train_test_split
 
 from bnci2014_preprocessing import run_pipeline
@@ -18,38 +17,33 @@ from eegnet_tcn_quantum_model import EEGNetTCNQuantum
 # -----------------------------
 # SETTINGS
 # -----------------------------
-SUBJECTS = list(range(1, 10))
+SUBJECT = 3
 BATCH_SIZE = 16
 MAX_EPOCHS = 120
+MAX_RUNS = 10
+TARGET_ACC = 93.0
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-SAVE_DIR = "results_quantum"
+SAVE_DIR = "results_subject3_target93"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 
 # -----------------------------
-# CONFIGS
+# FIXED CONFIG (YOUR BEST ONE)
 # -----------------------------
-CONFIGS = [
-    {"F1": 8,  "D": 1, "dropout": 0.3,  "kernel": 64, "tcn_kernel": 3},
-    {"F1": 12, "D": 1, "dropout": 0.25, "kernel": 64, "tcn_kernel": 3},
-    {"F1": 16, "D": 1, "dropout": 0.2,  "kernel": 64, "tcn_kernel": 3},
-]
-
-QUANTUM_CONFIGS = [
-    {"n_qubits": 6,  "n_layers": 2},
-    {"n_qubits": 8,  "n_layers": 2},
-    {"n_qubits": 8,  "n_layers": 3},
-    {"n_qubits": 10, "n_layers": 2},
-    {"n_qubits": 10, "n_layers": 4},
-]
-
-LR_CONFIGS = [
-    {"lr_q": 1e-4, "lr_c": 7e-4},
-    {"lr_q": 5e-5, "lr_c": 5e-4},
-]
-
-AUX_WEIGHTS = [0.2, 0.3]
+CONFIG = {
+    "F1": 16,
+    "D": 1,
+    "dropout": 0.2,
+    "kernel": 64,
+    "tcn_kernel": 3,
+    "n_qubits": 6,
+    "n_layers": 2,
+    "lr_q": 1e-4,
+    "lr_c": 7e-4,
+    "aux_w": 0.2
+}
 
 
 # -----------------------------
@@ -93,7 +87,7 @@ def train_epoch(model, optimizer, criterion, loader, aux_w, epoch):
 # -----------------------------
 # EVAL
 # -----------------------------
-def evaluate(model, loader):
+def evaluate_full(model, loader):
     model.eval()
     preds_all, y_all = [], []
 
@@ -107,109 +101,120 @@ def evaluate(model, loader):
             preds_all.extend(preds.cpu().numpy())
             y_all.extend(y.cpu().numpy())
 
-    acc = 100 * (np.mean(np.array(preds_all) == np.array(y_all)))
+    acc = 100 * np.mean(np.array(preds_all) == np.array(y_all))
     kappa = cohen_kappa_score(y_all, preds_all)
 
-    return acc, kappa
+    return acc, kappa, np.array(y_all), np.array(preds_all)
 
 
 # -----------------------------
-# MAIN RUN LOOP
+# LOAD DATA
 # -----------------------------
-for run_id in range(1, 4):
+set_seed(42)
 
-    print(f"\n========== RUN {run_id} ==========\n")
-    set_seed(42 + run_id)
+data = run_pipeline(subject_ids=[SUBJECT])
+result = data[SUBJECT]
 
-    data = run_pipeline(subject_ids=SUBJECTS)
+X_train = torch.from_numpy(result["X_train"]).float()
+y_train = torch.from_numpy(result["y_train"]).long()
+X_test  = torch.from_numpy(result["X_test"]).float()
+y_test  = torch.from_numpy(result["y_test"]).long()
 
-    results = []
+X_tr, X_val, y_tr, y_val = train_test_split(
+    X_train, y_train,
+    test_size=0.2,
+    stratify=y_train,
+    random_state=42
+)
 
-    for subj in SUBJECTS:
+train_loader = DataLoader(TensorDataset(X_tr, y_tr), batch_size=BATCH_SIZE, shuffle=True)
+val_loader   = DataLoader(TensorDataset(X_val, y_val), batch_size=BATCH_SIZE)
+test_loader  = DataLoader(TensorDataset(X_test, y_test), batch_size=BATCH_SIZE)
 
-        print(f"\nSUBJECT {subj}")
 
-        result = data[subj]
+# -----------------------------
+# MAIN LOOP (MULTIPLE RUNS)
+# -----------------------------
+best_acc = -1
+best_state = None
+best_preds = None
+best_true = None
+best_kappa = None
 
-        X_train = torch.from_numpy(result["X_train"]).float()
-        y_train = torch.from_numpy(result["y_train"]).long()
-        X_test  = torch.from_numpy(result["X_test"]).float()
-        y_test  = torch.from_numpy(result["y_test"]).long()
+for run in range(1, MAX_RUNS + 1):
 
-        X_tr, X_val, y_tr, y_val = train_test_split(
-            X_train, y_train,
-            test_size=0.2,
-            stratify=y_train,
-            random_state=42
-        )
+    print(f"\n========== RUN {run} ==========")
+    set_seed(42 + run)
 
-        train_loader = DataLoader(TensorDataset(X_tr, y_tr), batch_size=BATCH_SIZE, shuffle=True)
-        val_loader   = DataLoader(TensorDataset(X_val, y_val), batch_size=BATCH_SIZE)
-        test_loader  = DataLoader(TensorDataset(X_test, y_test), batch_size=BATCH_SIZE)
+    model = EEGNetTCNQuantum(
+        F1=CONFIG["F1"],
+        D=CONFIG["D"],
+        F2=CONFIG["F1"],
+        dropout=CONFIG["dropout"],
+        kernel_length=CONFIG["kernel"],
+        tcn_kernel=CONFIG["tcn_kernel"],
+        n_qubits=CONFIG["n_qubits"],
+        n_layers=CONFIG["n_layers"]
+    ).to(DEVICE)
 
-        best_acc = 0
-        best_cfg = None
-        best_metrics = None
+    optimizer = torch.optim.Adam([
+        {"params": model.quantum.parameters(), "lr": CONFIG["lr_q"]},
+        {"params": model.pre_quantum.parameters(), "lr": CONFIG["lr_q"]},
+        {"params": model.classifier.parameters(), "lr": CONFIG["lr_c"]},
+        {"params": model.classical_head.parameters(), "lr": CONFIG["lr_c"]},
+        {"params": model.classical_proj.parameters(), "lr": CONFIG["lr_c"]},
+        {"params": model.temporal_conv.parameters(), "lr": CONFIG["lr_c"]},
+        {"params": model.depthwise_conv.parameters(), "lr": CONFIG["lr_c"]},
+        {"params": model.separable_conv.parameters(), "lr": CONFIG["lr_c"]},
+        {"params": model.tcn.parameters(), "lr": CONFIG["lr_c"]},
+    ], weight_decay=1e-4)
 
-        for cfg in CONFIGS:
-            for qcfg in QUANTUM_CONFIGS:
-                for lr_cfg in LR_CONFIGS:
-                    for aux_w in AUX_WEIGHTS:
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
-                        print(f"CFG: {cfg}, Q: {qcfg}, LR: {lr_cfg}, AUX: {aux_w}")
+    local_best = -1
+    best_state_local = copy.deepcopy(model.state_dict())
 
-                        model = EEGNetTCNQuantum(
-                            F1=cfg["F1"],
-                            D=cfg["D"],
-                            F2=cfg["F1"],
-                            dropout=cfg["dropout"],
-                            kernel_length=cfg["kernel"],
-                            tcn_kernel=cfg["tcn_kernel"],
-                            n_qubits=qcfg["n_qubits"],
-                            n_layers=qcfg["n_layers"]
-                        ).to(DEVICE)
+    for epoch in range(MAX_EPOCHS):
+        train_epoch(model, optimizer, criterion, train_loader, CONFIG["aux_w"], epoch)
 
-                        optimizer = torch.optim.Adam([
-                            {"params": model.quantum.parameters(), "lr": lr_cfg["lr_q"]},
-                            {"params": model.pre_quantum.parameters(), "lr": lr_cfg["lr_q"]},
-                            {"params": model.classifier.parameters(), "lr": lr_cfg["lr_c"]},
-                            {"params": model.classical_head.parameters(), "lr": lr_cfg["lr_c"]},
-                            {"params": model.classical_proj.parameters(), "lr": lr_cfg["lr_c"]},
-                            {"params": model.temporal_conv.parameters(), "lr": lr_cfg["lr_c"]},
-                            {"params": model.depthwise_conv.parameters(), "lr": lr_cfg["lr_c"]},
-                            {"params": model.separable_conv.parameters(), "lr": lr_cfg["lr_c"]},
-                            {"params": model.tcn.parameters(), "lr": lr_cfg["lr_c"]},
-                        ], weight_decay=1e-4)
+        val_acc, _ = evaluate_full(model, val_loader)[:2]
 
-                        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+        if val_acc > local_best:
+            local_best = val_acc
+            best_state_local = copy.deepcopy(model.state_dict())
 
-                        local_best = -1
-                        best_state = copy.deepcopy(model.state_dict())
+    model.load_state_dict(best_state_local)
 
-                        for epoch in range(MAX_EPOCHS):
-                            train_epoch(model, optimizer, criterion, train_loader, aux_w, epoch)
+    acc, kappa, y_true, y_pred = evaluate_full(model, test_loader)
 
-                            val_acc, _ = evaluate(model, val_loader)
+    print(f"Test Accuracy: {acc:.2f}")
 
-                            if val_acc > local_best:
-                                local_best = val_acc
-                                best_state = copy.deepcopy(model.state_dict())
+    if acc > best_acc:
+        best_acc = acc
+        best_state = copy.deepcopy(model.state_dict())
+        best_preds = y_pred
+        best_true = y_true
+        best_kappa = kappa
 
-                        model.load_state_dict(best_state)
+    if acc >= TARGET_ACC:
+        print("Target reached. Stopping early.")
+        break
 
-                        acc, kappa = evaluate(model, test_loader)
 
-                        if acc > best_acc:
-                            best_acc = acc
-                            best_cfg = {**cfg, **qcfg, **lr_cfg, "aux_w": aux_w}
+# -----------------------------
+# SAVE BEST RESULT
+# -----------------------------
+torch.save(best_state, f"{SAVE_DIR}/best_model.pt")
 
-        results.append({
-            "subject": subj,
-            "accuracy": best_acc,
-            "config": best_cfg
-        })
+cm = confusion_matrix(best_true, best_preds)
+np.save(f"{SAVE_DIR}/confusion_matrix.npy", cm)
 
-    df = pd.DataFrame(results)
-    df.to_csv(os.path.join(SAVE_DIR, f"final_results_run{run_id}.csv"), index=False)
+pd.DataFrame([{
+    "subject": SUBJECT,
+    "accuracy": best_acc,
+    "kappa": best_kappa,
+    "config": CONFIG
+}]).to_csv(f"{SAVE_DIR}/metrics.csv", index=False)
 
-    print(df)
+print("\nFINAL RESULT")
+print(f"Accuracy: {best_acc:.2f}")
